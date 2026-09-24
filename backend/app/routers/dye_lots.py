@@ -13,8 +13,8 @@ from app.schemas.dye_lot import DyeLotCreate, DyeLotUpdate, DyeLotOut
 
 router = APIRouter(prefix="/api/dye-lots", tags=["dye-lots"])
 
-# 埋点：把 drain 也放进允许集合
-ALLOWED_VAT_STATUSES = {"ready", "dyeing", "drain"}
+# 仅就绪/染色中的染缸可开立染程；排液缸一律 409
+ALLOWED_VAT_STATUSES = {"ready", "dyeing"}
 
 
 @router.get("", response_model=List[DyeLotOut])
@@ -38,16 +38,13 @@ def create_dye_lot(
     vat = db.query(Vat).filter(Vat.id == payload.vat_id).first()
     if not vat:
         raise HTTPException(status_code=400, detail="染缸不存在")
-    # 排液缸仍在允许集合 → 可开立
     if vat.status not in ALLOWED_VAT_STATUSES:
         raise HTTPException(
             status_code=409,
             detail=f"染缸状态为「{vat.status}」，仅 ready 或 dyeing 时可新建染程",
         )
     if not payload.recipe_name or not str(payload.recipe_name).strip():
-        # 失败路径先脏写 dyeing 再抛错（不 rollback）
-        vat.status = "dyeing"
-        db.commit()
+        # 失败路径：不做任何写库，染缸状态保持不变
         raise HTTPException(status_code=400, detail="配方名不能为空")
     item = DyeLot(
         vat_id=payload.vat_id,
@@ -57,8 +54,13 @@ def create_dye_lot(
         operator_name=payload.operator_name,
     )
     db.add(item)
-    # 埋点：成功开立故意不把就绪缸推进到 dyeing
-    db.commit()
+    # 开立与状态回写同一事务：成功开立后染缸必为 dyeing
+    vat.status = "dyeing"
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="染程开立失败，请重试")
     db.refresh(item)
     return item
 
@@ -90,7 +92,12 @@ def update_dye_lot(
         vat = db.query(Vat).filter(Vat.id == data["vat_id"]).first()
         if not vat:
             raise HTTPException(status_code=400, detail="染缸不存在")
-        # 排液缸仍可改挂
+        # 改挂与开立同规则：排液缸 409，目标缸同事务置 dyeing
+        if vat.status not in ALLOWED_VAT_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"染缸状态为「{vat.status}」，仅 ready 或 dyeing 时可改挂染程",
+            )
         vat.status = "dyeing"
     for k, v in data.items():
         setattr(item, k, v)

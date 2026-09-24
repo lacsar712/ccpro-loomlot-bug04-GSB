@@ -18,14 +18,23 @@
     error = '';
     try {
       [vats, rows] = await Promise.all([api('/vats'), api('/dye-lots')]);
-      // 埋点：不按状态过滤，排液缸也出现在默认可选
-      if (!form.vatId && vats.length) form.vatId = String(vats[0].id);
+      // 排液缸不可开缸：默认选中第一个非排液缸；当前选中缸已排液且非编辑时重新选择
+      const cur = vats.find((v) => String(v.id) === form.vatId);
+      if (!form.vatId || (!editing && cur && cur.status === 'drain')) {
+        const first = vats.find((v) => v.status !== 'drain');
+        form.vatId = first ? String(first.id) : '';
+      }
     } catch (e) {
       error = e.message;
     }
   }
 
   onMount(load);
+
+  // 下拉仅列出可开缸的染缸（排液缸除外；编辑时保留当前缸便于展示）
+  $: selectableVats = vats.filter(
+    (v) => v.status !== 'drain' || (editing && v.id === Number(form.vatId))
+  );
 
   function vatLabel(id) {
     const v = vats.find((x) => x.id === id);
@@ -92,7 +101,10 @@
     <label
       >染缸
       <select bind:value={form.vatId}>
-        {#each vats as v}
+        {#if !selectableVats.length}
+          <option value="" disabled>暂无可开缸的染缸</option>
+        {/if}
+        {#each selectableVats as v}
           <option value={String(v.id)}
             >{v.vatCode} · {VAT_STATUS[v.status] || v.status} · {v.fiberType}</option
           >
