@@ -13,13 +13,23 @@
     operatorName: '染程操作员',
   };
   let editing = null;
+  // 仅 ready / dyeing 可开立；选中缸若因状态变化不在可选集合，仍保留在选项里
+  let selectableVats = [];
+  $: {
+    const openable = vats.filter((v) => v.status === 'ready' || v.status === 'dyeing');
+    const selected = vats.find((v) => String(v.id) === form.vatId);
+    selectableVats = selected && !openable.includes(selected) ? [...openable, selected] : openable;
+  }
 
   async function load() {
     error = '';
     try {
       [vats, rows] = await Promise.all([api('/vats'), api('/dye-lots')]);
-      // 埋点：不按状态过滤，排液缸也出现在默认可选
-      if (!form.vatId && vats.length) form.vatId = String(vats[0].id);
+      // 默认选中第一个可开立（ready / dyeing）的染缸
+      if (!form.vatId) {
+        const firstOpen = vats.find((v) => v.status === 'ready' || v.status === 'dyeing');
+        if (firstOpen) form.vatId = String(firstOpen.id);
+      }
     } catch (e) {
       error = e.message;
     }
@@ -92,7 +102,7 @@
     <label
       >染缸
       <select bind:value={form.vatId}>
-        {#each vats as v}
+        {#each selectableVats as v}
           <option value={String(v.id)}
             >{v.vatCode} · {VAT_STATUS[v.status] || v.status} · {v.fiberType}</option
           >
