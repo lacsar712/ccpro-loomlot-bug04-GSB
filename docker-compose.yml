@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: loomlot
+      POSTGRES_PASSWORD: loomlot
+      POSTGRES_DB: loomlot
+    ports:
+      - "5439:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loomlot -d loomlot"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 180s
+
+  backend:
+    build: ./backend
+    ports:
+      - "8600:8600"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://loomlot:loomlot@db:5432/loomlot
+      JWT_SECRET: loomlot-jwt-secret-change-me
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "480"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3600:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
